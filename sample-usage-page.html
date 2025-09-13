@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GDrive AppData JS Sample</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px auto; max-width: 900px; color: #2c3e50; }
+    header { text-align: center; margin-top: 20px; }
+    button { margin: 0 5px; }
+    #result { margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; white-space: pre-wrap; }
+    .row { margin: 8px 0; }
+    textarea { width: 100%; height: 240px; }
+    input[type="text"] { width: 320px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>GDrive AppData JS Sample</h1>
+  </header>
+  <div id="auth-section">
+    <p>
+      This app needs access to your Google Drive just to read/write its own data. It won't ask for access to any other data.
+    </p>
+    <button id="sign-in-btn">Sign in with Google</button>
+  </div>
+  <div id="app-section" style="display:none;">
+    <div class="row">
+      <button id="sign-out-btn">Sign out</button>
+      <button id="list-files-btn">List appDataFolder files</button>
+    </div>
+
+    <div class="row">
+      <label>
+        File name:
+        <input type="text" id="file-name" placeholder="example.txt" />
+      </label>
+    </div>
+
+    <div class="row">
+      <button id="read-file-btn">Read</button>
+      <button id="save-file-btn">Save (create or overwrite)</button>
+    </div>
+
+    <div class="row">
+      <label for="file-content">File content:</label>
+      <textarea id="file-content" placeholder="Type your text here..."></textarea>
+    </div>
+
+    <div id="result"></div>
+  </div>
+  <script type="module">
+    import { GDriveAppData } from './GDriveAppData.js';
+
+    const gdAppData = new GDriveAppData();
+    window.gdAppData = gdAppData; // accessible in browser console
+
+    const authSection = document.getElementById('auth-section');
+    const appSection = document.getElementById('app-section');
+    const signInBtn = document.getElementById('sign-in-btn');
+    const signOutBtn = document.getElementById('sign-out-btn');
+    const listFilesBtn = document.getElementById('list-files-btn');
+
+    const fileNameInput = document.getElementById('file-name');
+    const fileContentTA = document.getElementById('file-content');
+    const readBtn = document.getElementById('read-file-btn');
+    const saveBtn = document.getElementById('save-file-btn');
+ 
+    const resultDiv = document.getElementById('result');
+
+    function setBusy(b) {
+      [readBtn, saveBtn, listFilesBtn, signOutBtn].forEach(el => el.disabled = !!b);
+    }
+
+    function ensureName() {
+      const name = (fileNameInput.value || '').trim();
+      if (!name) throw new Error('Please enter a file name.');
+      return name;
+    }
+
+    gdAppData.onSignedInChange = (signedIn) => {
+      if (signedIn) {
+        authSection.style.display = 'none';
+        appSection.style.display = '';
+      } else {
+        authSection.style.display = '';
+        appSection.style.display = 'none';
+      }
+    };
+
+    signInBtn.onclick = () => gdAppData.signIn();
+    signOutBtn.onclick = () => gdAppData.signOut();
+
+    listFilesBtn.onclick = async () => {
+      setBusy(true);
+      resultDiv.textContent = 'Listing files...';
+      try {
+        const files = await gdAppData.listFiles();
+        const lines = files.map(f => `${f.name} (id=${f.id}, size=${f.size || 0}, modified=${f.modifiedTime})`);
+        resultDiv.textContent = lines.join('\n') || '(no files)';
+      } catch (e) {
+        resultDiv.textContent = 'List failed: ' + e;
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    readBtn.onclick = async () => {
+      setBusy(true);
+      resultDiv.textContent = 'Reading...';
+      try {
+        const name = ensureName();
+        const content = await gdAppData.readTextFile(name);
+        fileContentTA.value = content;
+        resultDiv.textContent = content ? 'Read success.' : 'File not found. Showing empty content.';
+      } catch (e) {
+        resultDiv.textContent = 'Read failed: ' + e;
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    saveBtn.onclick = async () => {
+      setBusy(true);
+      resultDiv.textContent = 'Saving...';
+      try {
+        const name = ensureName();
+        await gdAppData.createOrOverwriteTextFile(name, fileContentTA.value);
+        resultDiv.textContent = 'Saved (created or overwritten).';
+      } catch (e) {
+        resultDiv.textContent = 'Save failed: ' + e;
+      } finally {
+        setBusy(false);
+      }
+    };
+
+  </script>
+</body>
+</html>
