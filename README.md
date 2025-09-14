@@ -7,6 +7,7 @@
 - Create a Google Cloud project for the app (https://console.cloud.google.com/projectcreate); everything below is in the context of that project
 - Create a client (https://console.cloud.google.com/auth/clients) of type "Web application", and take a note of its ID
 - Add http://localhost:8080 (and/or whatever production URL you have) to the list of authorised JavaScript origins and the list of authorized redirect URIs for the client
+- Authorize google drive api access for the project (https://console.developers.google.com/apis/api/drive.googleapis.com/)
 - (seems to be optional) Enable the Google Drive API for appdata for the project (https://console.cloud.google.com/auth/scopes)
 - Add the email of the google account(s) you intend to use for the app to the list of allowed test users (https://console.cloud.google.com/auth/audience)
 - Replace the client ID in `googleClientConfig.js` with the one you got from the client creation step
