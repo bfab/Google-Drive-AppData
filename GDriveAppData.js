@@ -17,6 +17,9 @@ export class GDriveAppData {
     this.gisLoaded = false;
     this.tokenClient = null;
     this.onSignedInChange = null;
+    this.tokenExpiry = null;    // epoch ms of token expiry
+    this.refreshTimer = null;   // ID from setTimeout for refresh
+    this._pendingRequest = null; // { resolve, reject, timerId } for the current token request
   }
 
   async loadGapiScript() {
@@ -42,6 +45,7 @@ export class GDriveAppData {
   }
 
   async initGapiClient() {
+    if (this.gapiLoaded) return;
     await this.loadGapiScript();
     await new Promise((resolve) => {
       window.gapi.load('client', async () => {
@@ -56,31 +60,164 @@ export class GDriveAppData {
   }
 
   async initGisClient() {
+    if (this.gisLoaded && this.tokenClient) return;
     await this.loadGisScript();
     this.tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
       scope: SCOPES,
-      callback: (tokenResponse) => {
-        this.accessToken = tokenResponse.access_token;
-        this.isSignedIn = true;
-        window.gapi.client.setToken({ access_token: this.accessToken });
-        if (this.onSignedInChange) this.onSignedInChange(true);
-      },
+      callback: (tokenResponse) => this._handleTokenResponse(tokenResponse),
     });
     this.gisLoaded = true;
   }
 
+  // Internal: central place that receives token responses from the tokenClient callback
+  _handleTokenResponse(tokenResponse) {
+    // update internal state if token received
+    if (!tokenResponse || tokenResponse.error) {
+      // token request failed (common when silent request is not authorized)
+      // clear token state (but do not throw)
+      this.accessToken = null;
+      this.isSignedIn = false;
+      window.gapi && window.gapi.client && window.gapi.client.setToken && window.gapi.client.setToken(null);
+    } else {
+      // got token, update state & schedule refresh
+      this.accessToken = tokenResponse.access_token;
+      this.isSignedIn = true;
+      window.gapi && window.gapi.client && window.gapi.client.setToken && window.gapi.client.setToken({ access_token: this.accessToken });
+      // expires_in may be provided (seconds). fallback to 1 hour if missing
+      const expiresInSec = tokenResponse.expires_in || 3600;
+      this.tokenExpiry = Date.now() + expiresInSec * 1000;
+      this.scheduleTokenRefresh();
+      if (this.onSignedInChange) this.onSignedInChange(true);
+    }
+
+    // resolve/reject any pending promise wrapper
+    if (this._pendingRequest) {
+      const pending = this._pendingRequest;
+      this._pendingRequest = null;
+      clearTimeout(pending.timerId);
+      if (!tokenResponse || tokenResponse.error) {
+        pending.reject(tokenResponse || new Error('Token response error'));
+      } else {
+        pending.resolve(tokenResponse);
+      }
+    }
+  }
+
+  // Promise wrapper around tokenClient.requestAccessToken that resolves when the callback is invoked.
+  // opts example: { prompt: '' } or { prompt: 'consent' }
+  _requestAccessToken(opts = {}) {
+    return new Promise((resolve, reject) => {
+      if (!this.tokenClient) return reject(new Error('tokenClient not initialized'));
+      if (this._pendingRequest) return reject(new Error('Another token request is in progress'));
+
+      // create pending holder and timeout
+      const timerId = setTimeout(() => {
+        if (this._pendingRequest) {
+          const p = this._pendingRequest;
+          this._pendingRequest = null;
+          p.reject(new Error('Token request timed out'));
+        }
+      }, 15000);
+
+      this._pendingRequest = { resolve, reject, timerId };
+
+      try {
+        // This triggers the callback we set in initGisClient -> _handleTokenResponse
+        this.tokenClient.requestAccessToken(opts);
+      } catch (err) {
+        // immediate failure
+        clearTimeout(timerId);
+        this._pendingRequest = null;
+        return reject(err);
+      }
+    });
+  }
+
+  // signIn: first try silent, fallback to interactive consent if needed.
+  // returns the token response on success, throws on failure.
   async signIn() {
     if (!this.gapiLoaded) await this.initGapiClient();
     if (!this.gisLoaded) await this.initGisClient();
-    this.tokenClient.requestAccessToken({ prompt: 'consent' });
+
+    // try silent first
+    try {
+      const resp = await this._requestAccessToken({ prompt: '' });
+      return resp;
+    } catch (silentErr) {
+      // silent failed → fallback to interactive consent (pop-up)
+      const resp = await this._requestAccessToken({ prompt: 'consent' });
+      return resp;
+    }
   }
 
+  // Sign out: clear tokens and timers; revoke if possible
   signOut() {
+    // stop refresh timer
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    // clear any pending token request
+    if (this._pendingRequest) {
+      clearTimeout(this._pendingRequest.timerId);
+      this._pendingRequest = null;
+    }
+
+    // revoke the access token (best-effort)
+    try {
+      if (this.accessToken && window.google && window.google.accounts && window.google.accounts.oauth2 && window.google.accounts.oauth2.revoke) {
+        window.google.accounts.oauth2.revoke(this.accessToken, () => {});
+      }
+    } catch (e) {
+      // ignore revoke errors
+    }
+
     this.accessToken = null;
     this.isSignedIn = false;
-    window.gapi.client.setToken(null);
+    this.tokenExpiry = null;
+    window.gapi && window.gapi.client && window.gapi.client.setToken && window.gapi.client.setToken(null);
     if (this.onSignedInChange) this.onSignedInChange(false);
+  }
+
+  // Token refresh scheduling: refresh ~5 minutes before expiry
+  scheduleTokenRefresh() {
+    // clear existing timer
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    if (!this.tokenExpiry) return;
+
+    const refreshInMs = this.tokenExpiry - Date.now() - 5 * 60 * 1000; // 5 minutes before expiry
+    if (refreshInMs <= 0) {
+      // already near/expired → refresh now
+      this.refreshAccessToken();
+      return;
+    }
+
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      this.refreshAccessToken();
+    }, refreshInMs);
+  }
+
+  // Attempt a silent refresh (no popup
+
+  // Attempt a silent refresh (no popup). If it fails, we log and stop — next interactive signIn can be called.
+  refreshAccessToken() {
+    if (!this.tokenClient) return;
+    this._requestAccessToken({ prompt: '' })
+      .catch((err) => {
+        // silent refresh failed (user signed out, revoked access, or cookies blocked)
+        // we clear token state so callers know they need to sign in again.
+        console.warn('Silent token refresh failed:', err);
+        this.accessToken = null;
+        this.isSignedIn = false;
+        this.tokenExpiry = null;
+        window.gapi && window.gapi.client && window.gapi.client.setToken && window.gapi.client.setToken(null);
+        if (this.onSignedInChange) this.onSignedInChange(false);
+      });
   }
 
   async listFiles() {
@@ -170,3 +307,4 @@ export class GDriveAppData {
     return res.result;
   }
 }
+
