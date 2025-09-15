@@ -19,6 +19,6 @@ To run the sample page, serve `sample-usage-page.html` from a location that's su
 The page will allow you to:
 - Sign in/out with your Google account
 - List files in the Drive appDataFolder
-- Enter a file name, read its text content into a textarea, edit it, and save (create or overwrite) the file in appDataFolder
+- Enter a file name, read its text content into a textarea, edit it, save (create or overwrite) the file in appDataFolder, and delete it
 
 All operations are restricted to the Drive appDataFolder and rely on the GDriveAppData methods that take the file name as input.

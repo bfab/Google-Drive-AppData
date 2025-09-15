@@ -41,6 +41,7 @@
     <div class="row">
       <button id="read-file-btn">Read</button>
       <button id="save-file-btn">Save (create or overwrite)</button>
+      <button id="delete-file-btn">Delete</button>
     </div>
 
     <div class="row">
@@ -66,11 +67,12 @@
     const fileContentTA = document.getElementById('file-content');
     const readBtn = document.getElementById('read-file-btn');
     const saveBtn = document.getElementById('save-file-btn');
+    const deleteBtn = document.getElementById('delete-file-btn');
  
     const resultDiv = document.getElementById('result');
 
     function setBusy(b) {
-      [readBtn, saveBtn, listFilesBtn, signOutBtn].forEach(el => el.disabled = !!b);
+      [readBtn, saveBtn, deleteBtn, listFilesBtn, signOutBtn].forEach(el => el.disabled = !!b);
     }
 
     function ensureName() {
@@ -130,6 +132,26 @@
         resultDiv.textContent = 'Saved (created or overwritten).';
       } catch (e) {
         resultDiv.textContent = 'Save failed: ' + e;
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    deleteBtn.onclick = async () => {
+      setBusy(true);
+      resultDiv.textContent = 'Deleting...';
+      try {
+        const name = ensureName();
+        const deleted = await gdAppData.deleteFileByName(name);
+        resultDiv.textContent = deleted ? 'Deleted.' : 'File not found.';
+        if (deleted) {
+          // If the currently loaded content belonged to this file, clear it (optional UX)
+          if ((fileNameInput.value || '').trim() === name) {
+            fileContentTA.value = '';
+          }
+        }
+      } catch (e) {
+        resultDiv.textContent = 'Delete failed: ' + e;
       } finally {
         setBusy(false);
       }

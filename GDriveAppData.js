@@ -306,5 +306,12 @@ export class GDriveAppData {
     });
     return res.result;
   }
+
+  async deleteFileByName(name) {
+    const fileId = await this.getFileIdByName(name);
+    if (!fileId) return false;
+    await gapi.client.drive.files.delete({ fileId });
+    return true;
+  }
 }
 

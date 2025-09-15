@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import { GDriveAppData } from './GDriveAppData.js';
 
 // Minimal mock of gapi client
-function makeGapiMock({ filesList, filesGet, request }) {
+function makeGapiMock({ filesList, filesGet, filesDelete, request }) {
   return {
     client: {
       setToken: jest.fn(),
@@ -10,6 +10,7 @@ function makeGapiMock({ filesList, filesGet, request }) {
         files: {
           list: jest.fn().mockImplementation(filesList),
           get: jest.fn().mockImplementation(filesGet),
+          delete: jest.fn().mockImplementation(filesDelete),
         },
       },
       request: jest.fn().mockImplementation(request),
@@ -29,6 +30,7 @@ describe('GDriveAppData text file operations', () => {
         result: { files: [] },
       }),
       filesGet: async ({ fileId, alt }) => ({ body: 'content' }),
+      filesDelete: async ({ fileId }) => ({ result: {} }),
       request: async () => ({ result: { ok: true } }),
     });
   });
@@ -110,5 +112,20 @@ describe('GDriveAppData text file operations', () => {
         path: expect.stringMatching(/\/upload\/drive\/v3\/files\/id-2$/),
       })
     );
+  });
+
+  test('deleteFileByName returns false when not found', async () => {
+    const res = await gd.deleteFileByName('nope.txt');
+    expect(res).toBe(false);
+    expect(gapi.client.drive.files.delete).not.toHaveBeenCalled();
+  });
+
+  test('deleteFileByName deletes when found', async () => {
+    gapi.client.drive.files.list.mockResolvedValueOnce({
+      result: { files: [{ id: 'del-1', name: 'gone.txt' }] },
+    });
+    const res = await gd.deleteFileByName('gone.txt');
+    expect(res).toBe(true);
+    expect(gapi.client.drive.files.delete).toHaveBeenCalledWith({ fileId: 'del-1' });
   });
 });
